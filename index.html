@@ -2,27 +2,18 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>혈구 자동 개수 세기</title>
-
-  <!-- OpenCV.js -->
+  <title>혈구 자동 계수 (칸 분할 방식)</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-    }
-    canvas {
-      border: 1px solid #333;
-      margin-top: 10px;
-      max-width: 100%;
-    }
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    canvas { border: 1px solid #333; margin-top: 10px; max-width: 100%; }
   </style>
 </head>
 
 <body>
 
-<h2>🔬 혈구 자동 개수 세기</h2>
+<h2>🔬 혈구 자동 개수 세기 (격자 칸 기준)</h2>
 <input type="file" id="imageInput" accept="image/*">
 <p id="status">이미지를 업로드하세요.</p>
 <canvas id="canvas"></canvas>
@@ -31,94 +22,111 @@
 <script>
 cv['onRuntimeInitialized'] = () => {
 
-  let img = new Image();
-  let input = document.getElementById("imageInput");
+  const input = document.getElementById("imageInput");
+  const img = new Image();
 
   input.addEventListener("change", e => {
     img.src = URL.createObjectURL(e.target.files[0]);
   });
 
   img.onload = () => {
-    document.getElementById("status").innerText = "분석 중...";
-
     const canvas = document.getElementById("canvas");
     canvas.width = img.width;
     canvas.height = img.height;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(img, 0, 0);
 
-    // ===== OpenCV 처리 시작 =====
     let src = cv.imread(canvas);
     let gray = new cv.Mat();
     let blur = new cv.Mat();
     let thresh = new cv.Mat();
-    let contours = new cv.MatVector();
-    let hierarchy = new cv.Mat();
 
-    // 1️⃣ Grayscale
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-    // 2️⃣ Gaussian Blur (노이즈 제거)
     cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
 
-    // 3️⃣ Adaptive Threshold (격자 대비 안정적)
+    // 🔹 혈구 강조
     cv.adaptiveThreshold(
-      blur,
-      thresh,
+      blur, thresh,
       255,
       cv.ADAPTIVE_THRESH_GAUSSIAN_C,
       cv.THRESH_BINARY_INV,
-      11,
-      2
+      11, 2
     );
 
-    // 4️⃣ Contour 검출
-    cv.findContours(
-      thresh,
-      contours,
-      hierarchy,
-      cv.RETR_EXTERNAL,
-      cv.CHAIN_APPROX_SIMPLE
-    );
+    // ====== 🔥 격자 칸 ROI 수동 정의 ======
+    // ⚠️ 이 값은 헤모사이토미터 사진 기준
+    const cols = 5;
+    const rows = 5;
 
-    // 5️⃣ 혈구 필터링 (면적 + 원형도)
-    let count = 0;
+    const cellW = Math.floor(src.cols / cols);
+    const cellH = Math.floor(src.rows / rows);
 
-    for (let i = 0; i < contours.size(); i++) {
-      let cnt = contours.get(i);
+    let totalCount = 0;
 
-      let area = cv.contourArea(cnt);
-      if (area < 80 || area > 2000) continue;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
 
-      let perimeter = cv.arcLength(cnt, true);
-      if (perimeter === 0) continue;
+        let x = c * cellW;
+        let y = r * cellH;
+        let roiRect = new cv.Rect(x, y, cellW, cellH);
+        let roi = thresh.roi(roiRect);
 
-      let circularity =
-        4 * Math.PI * area / (perimeter * perimeter);
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
 
-      // 혈구 조건
-      if (circularity > 0.6) {
-        count++;
-        cv.drawContours(
+        cv.findContours(
+          roi, contours, hierarchy,
+          cv.RETR_EXTERNAL,
+          cv.CHAIN_APPROX_SIMPLE
+        );
+
+        for (let i = 0; i < contours.size(); i++) {
+          let cnt = contours.get(i);
+          let area = cv.contourArea(cnt);
+          if (area < 60 || area > 1500) continue;
+
+          let peri = cv.arcLength(cnt, true);
+          if (peri === 0) continue;
+
+          let circ = 4 * Math.PI * area / (peri * peri);
+          if (circ < 0.6) continue;
+
+          totalCount++;
+
+          // ROI 좌표 → 전체 좌표 변환
+          let shifted = new cv.Mat();
+          cnt.convertTo(shifted, -1, 1, 0);
+          for (let j = 0; j < shifted.data32S.length; j += 2) {
+            shifted.data32S[j] += x;
+            shifted.data32S[j + 1] += y;
+          }
+
+          let v = new cv.MatVector();
+          v.push_back(shifted);
+          cv.drawContours(src, v, -1, new cv.Scalar(255, 0, 0, 255), 2);
+
+          shifted.delete(); v.delete();
+        }
+
+        roi.delete(); contours.delete(); hierarchy.delete();
+
+        // 칸 테두리 표시
+        cv.rectangle(
           src,
-          contours,
-          i,
-          new cv.Scalar(255, 0, 0, 255),
-          2
+          new cv.Point(x, y),
+          new cv.Point(x + cellW, y + cellH),
+          new cv.Scalar(0, 255, 0, 255),
+          1
         );
       }
     }
 
-    // 결과 출력
     cv.imshow(canvas, src);
     document.getElementById("result").innerText =
-      `혈구 개수: ${count}`;
-    document.getElementById("status").innerText =
-      "분석 완료";
+      `혈구 개수 (표시된 칸 기준): ${totalCount}`;
+    document.getElementById("status").innerText = "분석 완료";
 
-    // 메모리 해제
-    src.delete(); gray.delete(); blur.delete();
-    thresh.delete(); contours.delete(); hierarchy.delete();
+    src.delete(); gray.delete(); blur.delete(); thresh.delete();
   };
 };
 </script>
