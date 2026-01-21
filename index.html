@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <title>혈구 자동 개수 세기 (격자 칸 기준)</title>
-  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+
+  <!-- ❗ async 제거 -->
+  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
@@ -20,7 +22,11 @@
 <h3 id="result"></h3>
 
 <script>
-cv['onRuntimeInitialized'] = () => {
+window.onload = () => {
+  if (typeof cv === 'undefined') {
+    alert("OpenCV 로딩 실패");
+    return;
+  }
 
   const input = document.getElementById("imageInput");
   const img = new Image();
@@ -54,9 +60,7 @@ cv['onRuntimeInitialized'] = () => {
       11, 2
     );
 
-    // 🔹 격자 칸 수 (헤모사이토미터 기준)
-    const rows = 5;
-    const cols = 5;
+    const rows = 5, cols = 5;
     const cellW = Math.floor(src.cols / cols);
     const cellH = Math.floor(src.rows / rows);
 
@@ -64,11 +68,9 @@ cv['onRuntimeInitialized'] = () => {
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-
         const x = c * cellW;
         const y = r * cellH;
-        const roiRect = new cv.Rect(x, y, cellW, cellH);
-        const roi = thresh.roi(roiRect);
+        const roi = thresh.roi(new cv.Rect(x, y, cellW, cellH));
 
         let contours = new cv.MatVector();
         let hierarchy = new cv.Mat();
@@ -90,26 +92,18 @@ cv['onRuntimeInitialized'] = () => {
           const circ = 4 * Math.PI * area / (peri * peri);
           if (circ < 0.6) continue;
 
-          total++;
-
-          // 중심점 계산 (ROI 기준)
           const m = cv.moments(cnt);
           if (m.m00 !== 0) {
             const cx = Math.round(m.m10 / m.m00) + x;
             const cy = Math.round(m.m01 / m.m00) + y;
-            cv.circle(
-              src,
-              new cv.Point(cx, cy),
-              4,
-              new cv.Scalar(255, 0, 0, 255),
-              -1
-            );
+            cv.circle(src, new cv.Point(cx, cy), 4,
+              new cv.Scalar(255, 0, 0, 255), -1);
+            total++;
           }
         }
 
         roi.delete(); contours.delete(); hierarchy.delete();
 
-        // 격자 표시
         cv.rectangle(
           src,
           new cv.Point(x, y),
