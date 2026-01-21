@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>혈구 자동 계수</title>
+  <title>혈구 자동 개수 세기</title>
 
   <!-- OpenCV.js -->
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
@@ -15,6 +15,7 @@
     canvas {
       border: 1px solid #333;
       margin-top: 10px;
+      max-width: 100%;
     }
   </style>
 </head>
@@ -28,81 +29,99 @@
 <h3 id="result"></h3>
 
 <script>
-let img = new Image();
-let input = document.getElementById("imageInput");
+cv['onRuntimeInitialized'] = () => {
 
-input.addEventListener("change", e => {
-  img.src = URL.createObjectURL(e.target.files[0]);
-});
+  let img = new Image();
+  let input = document.getElementById("imageInput");
 
-img.onload = () => {
-  document.getElementById("status").innerText = "분석 중...";
+  input.addEventListener("change", e => {
+    img.src = URL.createObjectURL(e.target.files[0]);
+  });
 
-  const canvas = document.getElementById("canvas");
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(img, 0, 0);
+  img.onload = () => {
+    document.getElementById("status").innerText = "분석 중...";
 
-  // OpenCV 처리
-  let src = cv.imread(canvas);
-  let gray = new cv.Mat();
-  let blur = new cv.Mat();
-  let thresh = new cv.Mat();
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
+    const canvas = document.getElementById("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
 
-  // 1️⃣ 그레이스케일
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    // ===== OpenCV 처리 시작 =====
+    let src = cv.imread(canvas);
+    let gray = new cv.Mat();
+    let blur = new cv.Mat();
+    let thresh = new cv.Mat();
+    let contours = new cv.MatVector();
+    let hierarchy = new cv.Mat();
 
-  // 2️⃣ 블러 (노이즈 제거)
-  cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
+    // 1️⃣ Grayscale
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-  // 3️⃣ 이진화 (혈구가 어두운 경우 기준)
-  cv.threshold(blur, thresh, 0, 255,
-    cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+    // 2️⃣ Gaussian Blur (노이즈 제거)
+    cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
 
-  // 4️⃣ 윤곽선 검출
-  cv.findContours(
-    thresh,
-    contours,
-    hierarchy,
-    cv.RETR_EXTERNAL,
-    cv.CHAIN_APPROX_SIMPLE
-  );
+    // 3️⃣ Adaptive Threshold (격자 대비 안정적)
+    cv.adaptiveThreshold(
+      blur,
+      thresh,
+      255,
+      cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+      cv.THRESH_BINARY_INV,
+      11,
+      2
+    );
 
-  // 5️⃣ 혈구 필터링 & 카운트
-  let count = 0;
+    // 4️⃣ Contour 검출
+    cv.findContours(
+      thresh,
+      contours,
+      hierarchy,
+      cv.RETR_EXTERNAL,
+      cv.CHAIN_APPROX_SIMPLE
+    );
 
-  for (let i = 0; i < contours.size(); i++) {
-    let cnt = contours.get(i);
-    let area = cv.contourArea(cnt);
+    // 5️⃣ 혈구 필터링 (면적 + 원형도)
+    let count = 0;
 
-    // ⚠️ 혈구 크기 조건 (사진에 따라 조절)
-    if (area > 100 && area < 5000) {
-      count++;
-      cv.drawContours(
-        src,
-        contours,
-        i,
-        new cv.Scalar(255, 0, 0, 255),
-        2
-      );
+    for (let i = 0; i < contours.size(); i++) {
+      let cnt = contours.get(i);
+
+      let area = cv.contourArea(cnt);
+      if (area < 80 || area > 2000) continue;
+
+      let perimeter = cv.arcLength(cnt, true);
+      if (perimeter === 0) continue;
+
+      let circularity =
+        4 * Math.PI * area / (perimeter * perimeter);
+
+      // 혈구 조건
+      if (circularity > 0.6) {
+        count++;
+        cv.drawContours(
+          src,
+          contours,
+          i,
+          new cv.Scalar(255, 0, 0, 255),
+          2
+        );
+      }
     }
-  }
 
-  // 결과 표시
-  cv.imshow(canvas, src);
-  document.getElementById("result").innerText =
-    `혈구 개수: ${count}`;
-  document.getElementById("status").innerText =
-    "분석 완료";
+    // 결과 출력
+    cv.imshow(canvas, src);
+    document.getElementById("result").innerText =
+      `혈구 개수: ${count}`;
+    document.getElementById("status").innerText =
+      "분석 완료";
 
-  // 메모리 해제
-  src.delete(); gray.delete(); blur.delete();
-  thresh.delete(); contours.delete(); hierarchy.delete();
+    // 메모리 해제
+    src.delete(); gray.delete(); blur.delete();
+    thresh.delete(); contours.delete(); hierarchy.delete();
+  };
 };
 </script>
 
 </body>
-</html>  
+</html>
