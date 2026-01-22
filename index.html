@@ -2,405 +2,107 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>혈구 자동 개수 세기 (개선 버전)</title>
+  <title>혈구 자동 개수</title>
+
+  <!-- OpenCV.js -->
+  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+
   <style>
-    body { 
-      font-family: Arial, sans-serif; 
-      padding: 20px; 
-      max-width: 1200px;
-      margin: 0 auto;
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
     }
-    .controls {
-      background: #f5f5f5;
-      padding: 15px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-    }
-    .control-group {
-      margin: 10px 0;
-    }
-    label {
-      display: inline-block;
-      width: 180px;
-      font-weight: bold;
-    }
-    input[type="range"] {
-      width: 200px;
-    }
-    canvas { 
-      border: 2px solid #333; 
-      margin-top: 10px; 
-      max-width: 100%;
-      display: block;
-    }
-    button {
-      background: #007bff;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 5px;
-      cursor: pointer;
-      font-size: 14px;
-      margin: 5px;
-    }
-    button:hover {
-      background: #0056b3;
-    }
-    button:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-    }
-    #result {
-      background: #e7f3ff;
-      padding: 15px;
-      border-radius: 5px;
+    canvas {
+      border: 1px solid #333;
       margin-top: 10px;
-      font-size: 18px;
-    }
-    #status {
-      color: #666;
-      font-style: italic;
-      padding: 10px;
-      background: #fff3cd;
-      border-radius: 5px;
-      margin: 10px 0;
-    }
-    .loading {
-      color: #007bff;
-      font-weight: bold;
     }
   </style>
 </head>
+
 <body>
-<h2>🔬 혈구 자동 개수 세기 (개선 버전)</h2>
 
-<div class="controls">
-  <div class="control-group">
-    <input type="file" id="imageInput" accept="image/*">
-  </div>
-  
-  <div class="control-group">
-    <label>최소 면적:</label>
-    <input type="range" id="minArea" min="20" max="200" value="50" step="5">
-    <span id="minAreaVal">50</span>
-  </div>
-  
-  <div class="control-group">
-    <label>최대 면적:</label>
-    <input type="range" id="maxArea" min="500" max="3000" value="1800" step="100">
-    <span id="maxAreaVal">1800</span>
-  </div>
-  
-  <div class="control-group">
-    <label>원형도 임계값:</label>
-    <input type="range" id="circularity" min="0.3" max="0.9" value="0.5" step="0.05">
-    <span id="circularityVal">0.5</span>
-  </div>
-  
-  <div class="control-group">
-    <label>블러 크기:</label>
-    <input type="range" id="blurSize" min="3" max="15" value="7" step="2">
-    <span id="blurSizeVal">7</span>
-  </div>
-  
-  <div class="control-group">
-    <button id="reanalyze" disabled>다시 분석</button>
-    <button id="resetParams">파라미터 초기화</button>
-  </div>
-</div>
-
-<p id="status">OpenCV 로딩 중...</p>
+<h2>🔬 혈구 자동 개수 세기</h2>
+<input type="file" id="imageInput" accept="image/*">
+<p id="status">이미지를 업로드하세요.</p>
 <canvas id="canvas"></canvas>
 <h3 id="result"></h3>
 
 <script>
-let currentImage = null;
-let cvReady = false;
+let img = new Image();
+let input = document.getElementById("imageInput");
 
-// OpenCV.js 로딩
-function loadOpenCV() {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://docs.opencv.org/4.x/opencv.js';
-    script.async = true;
-    
-    script.onload = () => {
-      // OpenCV가 완전히 로드될 때까지 대기
-      if (typeof cv !== 'undefined') {
-        cv['onRuntimeInitialized'] = () => {
-          console.log('OpenCV 로딩 완료');
-          resolve();
-        };
-      } else {
-        const checkCV = setInterval(() => {
-          if (typeof cv !== 'undefined') {
-            clearInterval(checkCV);
-            cv['onRuntimeInitialized'] = () => {
-              console.log('OpenCV 로딩 완료');
-              resolve();
-            };
-          }
-        }, 100);
-      }
-    };
-    
-    script.onerror = () => {
-      reject(new Error('OpenCV 로딩 실패'));
-    };
-    
-    document.head.appendChild(script);
-  });
-}
+input.addEventListener("change", e => {
+  img.src = URL.createObjectURL(e.target.files[0]);
+});
 
-// 초기화
-async function init() {
-  try {
-    await loadOpenCV();
-    cvReady = true;
-    document.getElementById('status').innerHTML = '✅ OpenCV 로딩 완료. 이미지를 업로드하세요.';
-    document.getElementById('reanalyze').disabled = false;
-    setupEventListeners();
-  } catch (error) {
-    document.getElementById('status').innerHTML = '❌ OpenCV 로딩 실패. 페이지를 새로고침하세요.';
-    console.error(error);
-  }
-}
+img.onload = () => {
+  document.getElementById("status").innerText = "분석 중...";
 
-function setupEventListeners() {
-  // 파라미터 변경 시 실시간 업데이트
-  document.getElementById('minArea').addEventListener('input', (e) => {
-    document.getElementById('minAreaVal').textContent = e.target.value;
-  });
-  document.getElementById('maxArea').addEventListener('input', (e) => {
-    document.getElementById('maxAreaVal').textContent = e.target.value;
-  });
-  document.getElementById('circularity').addEventListener('input', (e) => {
-    document.getElementById('circularityVal').textContent = e.target.value;
-  });
-  document.getElementById('blurSize').addEventListener('input', (e) => {
-    document.getElementById('blurSizeVal').textContent = e.target.value;
-  });
+  const canvas = document.getElementById("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0);
 
-  document.getElementById('resetParams').addEventListener('click', () => {
-    document.getElementById('minArea').value = 50;
-    document.getElementById('maxArea').value = 1800;
-    document.getElementById('circularity').value = 0.5;
-    document.getElementById('blurSize').value = 7;
-    document.getElementById('minAreaVal').textContent = '50';
-    document.getElementById('maxAreaVal').textContent = '1800';
-    document.getElementById('circularityVal').textContent = '0.5';
-    document.getElementById('blurSizeVal').textContent = '7';
-    if (currentImage) analyzeImage();
-  });
+  // OpenCV 처리
+  let src = cv.imread(canvas);
+  let gray = new cv.Mat();
+  let blur = new cv.Mat();
+  let thresh = new cv.Mat();
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
 
-  document.getElementById('reanalyze').addEventListener('click', () => {
-    if (currentImage) analyzeImage();
-  });
+  // 1️⃣ 그레이스케일
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-  const input = document.getElementById("imageInput");
-  const img = new Image();
-  
-  input.addEventListener("change", e => {
-    const file = e.target.files[0];
-    if (file) {
-      document.getElementById('status').innerHTML = '이미지 로딩 중...';
-      img.src = URL.createObjectURL(file);
+  // 2️⃣ 블러 (노이즈 제거)
+  cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
+
+  // 3️⃣ 이진화 (혈구가 어두운 경우 기준)
+  cv.threshold(blur, thresh, 0, 255,
+    cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+  // 4️⃣ 윤곽선 검출
+  cv.findContours(
+    thresh,
+    contours,
+    hierarchy,
+    cv.RETR_EXTERNAL,
+    cv.CHAIN_APPROX_SIMPLE
+  );
+
+  // 5️⃣ 혈구 필터링 & 카운트
+  let count = 0;
+
+  for (let i = 0; i < contours.size(); i++) {
+    let cnt = contours.get(i);
+    let area = cv.contourArea(cnt);
+
+    // ⚠️ 혈구 크기 조건 (사진에 따라 조절)
+    if (area > 100 && area < 5000) {
+      count++;
+      cv.drawContours(
+        src,
+        contours,
+        i,
+        new cv.Scalar(255, 0, 0, 255),
+        2
+      );
     }
-  });
-  
-  img.onload = () => {
-    currentImage = img;
-    analyzeImage();
-  };
-  
-  img.onerror = () => {
-    document.getElementById('status').innerHTML = '❌ 이미지 로딩 실패';
-  };
-}
-
-function analyzeImage() {
-  if (!currentImage || !cvReady) {
-    console.log('이미지 또는 OpenCV가 준비되지 않음');
-    return;
   }
-  
-  const startTime = performance.now();
-  document.getElementById("status").innerHTML = '<span class="loading">🔄 분석 중...</span>';
-  
-  try {
-    const canvas = document.getElementById("canvas");
-    const img = currentImage;
-    
-    // 이미지 크기 최적화
-    let displayWidth = img.width;
-    let displayHeight = img.height;
-    const maxDim = 1200;
-    
-    if (img.width > maxDim || img.height > maxDim) {
-      const scale = Math.min(maxDim / img.width, maxDim / img.height);
-      displayWidth = Math.floor(img.width * scale);
-      displayHeight = Math.floor(img.height * scale);
-    }
-    
-    canvas.width = displayWidth;
-    canvas.height = displayHeight;
-    
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0, displayWidth, displayHeight);
-    
-    let src = cv.imread(canvas);
-    let gray = new cv.Mat();
-    let blur = new cv.Mat();
-    let thresh = new cv.Mat();
-    let morphed = new cv.Mat();
-    
-    // 파라미터 가져오기
-    const minArea = parseInt(document.getElementById('minArea').value);
-    const maxArea = parseInt(document.getElementById('maxArea').value);
-    const minCircularity = parseFloat(document.getElementById('circularity').value);
-    const blurSize = parseInt(document.getElementById('blurSize').value);
-    
-    // 그레이스케일 변환
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    
-    // 가우시안 블러
-    cv.GaussianBlur(gray, blur, new cv.Size(blurSize, blurSize), 0);
-    
-    // 적응형 임계값
-    cv.adaptiveThreshold(
-      blur, thresh,
-      255,
-      cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-      cv.THRESH_BINARY_INV,
-      15, 3
-    );
-    
-    // 모폴로지 연산
-    let kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-    cv.morphologyEx(thresh, morphed, cv.MORPH_OPEN, kernel);
-    cv.morphologyEx(morphed, morphed, cv.MORPH_CLOSE, kernel);
-    
-    // 격자 그리기
-    const rows = 5, cols = 5;
-    const cellW = Math.floor(src.cols / cols);
-    const cellH = Math.floor(src.rows / rows);
-    
-    let total = 0;
-    
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const x = c * cellW;
-        const y = r * cellH;
-        
-        const roi = morphed.roi(new cv.Rect(x, y, cellW, cellH));
-        
-        let contours = new cv.MatVector();
-        let hierarchy = new cv.Mat();
-        
-        cv.findContours(
-          roi, contours, hierarchy,
-          cv.RETR_EXTERNAL,
-          cv.CHAIN_APPROX_SIMPLE
-        );
-        
-        let cellCount = 0;
-        
-        for (let i = 0; i < contours.size(); i++) {
-          const cnt = contours.get(i);
-          const area = cv.contourArea(cnt);
-          
-          if (area < minArea || area > maxArea) {
-            cnt.delete();
-            continue;
-          }
-          
-          const peri = cv.arcLength(cnt, true);
-          if (peri === 0) {
-            cnt.delete();
-            continue;
-          }
-          
-          const circ = 4 * Math.PI * area / (peri * peri);
-          
-          if (circ < minCircularity) {
-            cnt.delete();
-            continue;
-          }
-          
-          const m = cv.moments(cnt);
-          if (m.m00 !== 0) {
-            const cx = Math.round(m.m10 / m.m00) + x;
-            const cy = Math.round(m.m01 / m.m00) + y;
-            
-            cv.circle(src, new cv.Point(cx, cy), 5,
-              new cv.Scalar(255, 0, 0, 255), -1);
-            
-            const radius = Math.sqrt(area / Math.PI);
-            cv.circle(src, new cv.Point(cx, cy), Math.round(radius),
-              new cv.Scalar(0, 255, 0, 255), 2);
-            
-            cellCount++;
-            total++;
-          }
-          
-          cnt.delete();
-        }
-        
-        roi.delete();
-        contours.delete();
-        hierarchy.delete();
-        
-        cv.rectangle(
-          src,
-          new cv.Point(x, y),
-          new cv.Point(x + cellW, y + cellH),
-          new cv.Scalar(0, 0, 255, 255),
-          2
-        );
-        
-        if (cellCount > 0) {
-          cv.putText(
-            src,
-            cellCount.toString(),
-            new cv.Point(x + 5, y + 20),
-            cv.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            new cv.Scalar(255, 255, 0, 255),
-            2
-          );
-        }
-      }
-    }
-    
-    cv.imshow(canvas, src);
-    
-    const endTime = performance.now();
-    const processingTime = ((endTime - startTime) / 1000).toFixed(2);
-    
-    document.getElementById("result").innerHTML = `
-      <strong>혈구 개수 (표시된 칸 기준): ${total}</strong><br>
-      처리 시간: ${processingTime}초<br>
-      평균 칸당 개수: ${(total / 25).toFixed(1)}개
-    `;
-    document.getElementById("status").innerHTML = '✅ 분석 완료';
-    
-    // 메모리 해제
-    src.delete();
-    gray.delete();
-    blur.delete();
-    thresh.delete();
-    morphed.delete();
-    kernel.delete();
-    
-  } catch (error) {
-    console.error('분석 중 오류:', error);
-    document.getElementById("status").innerHTML = '❌ 분석 중 오류 발생: ' + error.message;
-  }
-}
 
-// 페이지 로드 시 초기화
-init();
+  // 결과 표시
+  cv.imshow(canvas, src);
+  document.getElementById("result").innerText =
+    `혈구 개수: ${count}`;
+  document.getElementById("status").innerText =
+    "분석 완료";
+
+  // 메모리 해제
+  src.delete(); gray.delete(); blur.delete();
+  thresh.delete(); contours.delete(); hierarchy.delete();
+};
 </script>
+
 </body>
 </html>
